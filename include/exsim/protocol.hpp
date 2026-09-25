@@ -1,0 +1,149 @@
+// Binary order-entry wire format and codec.
+//
+// Fixed-size, little-endian, packed messages with a common 16-byte header, in the spirit of
+// NASDAQ OUCH/ITCH. Decoding copies each message with memcpy into a local struct. That is
+// alignment-safe and free of strict-aliasing UB, and at these sizes it compiles to a few moves.
+// Every field is validated before a Command is produced, and malformed input is reported, never
+// trusted.
+#pragma once
+
+#include <bit>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+
+#include "exsim/common.hpp"
+
+namespace exsim::wire {
+
+static_assert(std::endian::native == std::endian::little, "wire format is little-endian; add byte swaps for BE hosts");
+
+inline constexpr std::uint8_t kVersion = 1;
+
+#pragma pack(push, 1)
+struct Header {
+  std::uint16_t length;  // total message length in bytes, header included
+  std::uint8_t type;     // MsgType
+  std::uint8_t version;
+  std::uint32_t symbol;
+  std::uint64_t seq;
+};
+struct NewOrder {
+  Header hdr;
+  std::uint64_t order_id;
+  std::int64_t price;
+  std::uint32_t qty;
+  std::uint32_t owner;
+  std::uint8_t side;
+  std::uint8_t ord_type;
+  std::uint8_t tif;
+  std::uint8_t flags;
+  std::uint32_t reserved;
+};
+struct Cancel {
+  Header hdr;
+  std::uint64_t order_id;
+};
+struct Modify {
+  Header hdr;
+  std::uint64_t order_id;
+  std::int64_t price;
+  std::uint32_t qty;
+  std::uint32_t reserved;
+};
+#pragma pack(pop)
+
+static_assert(sizeof(Header) == 16 && sizeof(NewOrder) == 48 && sizeof(Cancel) == 24 && sizeof(Modify) == 40);
+inline constexpr std::size_t kMaxMessageSize = sizeof(NewOrder);
+
+enum class DecodeStatus : std::uint8_t {
+  Ok,
+  Incomplete,  // need more bytes; consumed == 0
+  Malformed,   // consumed > 0: skip that many bytes and continue. consumed == 0: framing lost, stop.
+};
+
+struct DecodeResult {
+  DecodeStatus status;
+  std::size_t consumed;
+};
+
+EXSIM_ALWAYS_INLINE DecodeResult decode(const std::byte* p, std::size_t avail, Command& out) noexcept {
+  if (EXSIM_UNLIKELY(avail < sizeof(Header))) return {DecodeStatus::Incomplete, 0};
+  Header h;
+  std::memcpy(&h, p, sizeof h);
+  if (EXSIM_UNLIKELY(h.length < sizeof(Header))) return {DecodeStatus::Malformed, 0};
+  if (EXSIM_UNLIKELY(avail < h.length)) return {DecodeStatus::Incomplete, 0};
+  const DecodeResult bad{DecodeStatus::Malformed, h.length};
+  if (EXSIM_UNLIKELY(h.version != kVersion)) return bad;
+
+  out = Command{};
+  out.seq = h.seq;
+  out.symbol = h.symbol;
+  switch (h.type) {
+    case static_cast<std::uint8_t>(MsgType::NewOrder): {
+      if (EXSIM_UNLIKELY(h.length != sizeof(NewOrder))) return bad;
+      NewOrder m;
+      std::memcpy(&m, p, sizeof m);
+      if (EXSIM_UNLIKELY(m.side > 1 || m.ord_type > 1 || m.tif > 2)) return bad;
+      out.type = MsgType::NewOrder;
+      out.order_id = m.order_id;
+      out.price = m.price;
+      out.qty = m.qty;
+      out.owner = m.owner;
+      out.side = static_cast<Side>(m.side);
+      out.ord_type = static_cast<OrdType>(m.ord_type);
+      out.tif = static_cast<Tif>(m.tif);
+      out.flags = m.flags;
+      return {DecodeStatus::Ok, h.length};
+    }
+    case static_cast<std::uint8_t>(MsgType::Cancel): {
+      if (EXSIM_UNLIKELY(h.length != sizeof(Cancel))) return bad;
+      Cancel m;
+      std::memcpy(&m, p, sizeof m);
+      out.type = MsgType::Cancel;
+      out.order_id = m.order_id;
+      return {DecodeStatus::Ok, h.length};
+    }
+    case static_cast<std::uint8_t>(MsgType::Modify): {
+      if (EXSIM_UNLIKELY(h.length != sizeof(Modify))) return bad;
+      Modify m;
+      std::memcpy(&m, p, sizeof m);
+      out.type = MsgType::Modify;
+      out.order_id = m.order_id;
+      out.price = m.price;
+      out.qty = m.qty;
+      return {DecodeStatus::Ok, h.length};
+    }
+    default:
+      return bad;
+  }
+}
+
+// Encodes c into out (which must have room for kMaxMessageSize bytes); returns bytes written.
+inline std::size_t encode(const Command& c, std::byte* out) noexcept {
+  auto header = [&](std::size_t len) {
+    return Header{static_cast<std::uint16_t>(len), static_cast<std::uint8_t>(c.type), kVersion, c.symbol, c.seq};
+  };
+  switch (c.type) {
+    case MsgType::NewOrder: {
+      const NewOrder m{header(sizeof(NewOrder)), c.order_id, c.price, c.qty, c.owner,
+                       static_cast<std::uint8_t>(c.side), static_cast<std::uint8_t>(c.ord_type),
+                       static_cast<std::uint8_t>(c.tif), c.flags, 0};
+      std::memcpy(out, &m, sizeof m);
+      return sizeof m;
+    }
+    case MsgType::Cancel: {
+      const Cancel m{header(sizeof(Cancel)), c.order_id};
+      std::memcpy(out, &m, sizeof m);
+      return sizeof m;
+    }
+    case MsgType::Modify: {
+      const Modify m{header(sizeof(Modify)), c.order_id, c.price, c.qty, 0};
+      std::memcpy(out, &m, sizeof m);
+      return sizeof m;
+    }
+  }
+  return 0;
+}
+
+}  // namespace exsim::wire
