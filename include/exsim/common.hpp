@@ -97,6 +97,12 @@ enum class Reason : std::uint8_t {
   IocExpired,       // IOC / market remainder
   FokUnfilled,
   SelfTrade,
+  RiskMaxQty,       // pre-trade risk (risk.hpp)
+  RiskMaxNotional,
+  RiskCollar,       // price too far from the last trade
+  RiskRateLimit,
+  RiskHalted,
+  UnknownOwner,
 };
 
 // Outbound execution event. Every field is named (no implicit padding), so two events are equal
