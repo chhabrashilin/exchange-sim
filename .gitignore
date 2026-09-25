@@ -1,0 +1,7 @@
+build/
+*.bin
+cachegrind.out.*
+results/
+.vscode/
+.idea/
+compile_commands.json
