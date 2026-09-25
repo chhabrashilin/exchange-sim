@@ -82,15 +82,22 @@
   table { border-collapse: collapse; width: 100%; } td, th { text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--line); }
   th:first-child, td:first-child { text-align: left; } th { color: var(--muted); font-weight: 600; font-size: 12px; }
   .hidden { display: none; }
+  .figs { display: grid; gap: 14px; grid-template-columns: 1fr 1fr; }
+  @media (max-width: 900px) { .figs { grid-template-columns: 1fr; } }
+  .fig { background: #ffffff; border: 1px solid var(--line); border-radius: 12px; padding: 8px; }
+  .fig img { width: 100%; height: auto; display: block; }
+  .fig p { color: #4b5563; font-size: 12px; margin: 6px 4px 2px; }
+  ul.tk { margin: 0; padding-left: 18px; } ul.tk li { margin: 6px 0; }
 </style>
 </head>
 <body>
 <header>
   <h1>exchange-sim <span class="sub">Explorer</span></h1>
-  <span class="sub">A price-time priority matching engine you can poke. The engine on this page is a JavaScript port of the C++ rules.</span>
+  <span class="sub">A price-time priority matching engine you can poke. It is the real C++ engine, compiled to WebAssembly. <b id="engine-badge">loading engine...</b></span>
   <nav role="tablist">
     <button class="tab" role="tab" aria-selected="true" data-tab="book">Live order book</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="results">Benchmark results</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="real">Real market data</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="how">How it works</button>
     <button class="btn" id="theme" title="Toggle theme">Theme</button>
   </nav>
@@ -152,12 +159,13 @@
   </div>
 
   <div class="panel" style="margin-top:14px">
-    <h2>Speed check: this page's engine, in your browser</h2>
-    <button class="btn" id="b-bench">Run 300,000 random orders</button>
+    <h2>Speed check: the WebAssembly engine, in your browser</h2>
+    <button class="btn" id="b-bench">Run 1,000,000 random orders</button>
     <span class="mono" id="bench-out" style="margin-left:10px"></span>
-    <p class="note">This times the JavaScript port on your browser, with objects and garbage collection, so it is
-      <b>not</b> the C++ number. The C++ engine does ~26 million messages/second on one core with zero allocations
-      (see the Benchmark results tab). The gap is what "cache-conscious, allocation-free" buys.</p>
+    <p class="note">This runs the same C++ matching code, compiled to WebAssembly, on a private book inside your
+      browser. Expect roughly a quarter to a third of the native figure (about 26 million messages/second on one core in
+      the benchmark tables): WebAssembly has no huge pages, no core pinning and a slower memory model. It is the same code,
+      not a re-implementation, so any difference is the platform, not the algorithm.</p>
   </div>
 </section>
 
@@ -210,141 +218,224 @@
     </div>
   </div>
 </section>
+
+<!-- ============ REAL DATA ============ -->
+<section id="tab-real" class="hidden">
+  <div class="panel" style="margin-bottom:14px">
+    <h2>Real Binance data, through the same engine</h2>
+    <p class="note" style="margin:0">Live BTCUSDT and ETHUSDT depth diffs, trades and REST snapshots were recorded against one local clock,
+      converted to exact integer ticks and lots, and replayed through the matching engine. The rebuilt book is compared with the
+      exchange's own snapshot at the exact sequence point, level for level. Then a market-making study runs on top. Everything on this tab
+      is measured; the write-up is docs/RESEARCH.md.</p>
+  </div>
+  <div class="kpis">
+    <div class="kpi"><b class="mono">1,159 / 1,159</b><span>snapshots exact (3 sessions)</span></div>
+    <div class="kpi"><b class="mono">927,200</b><span>levels compared, 0 mismatched</span></div>
+    <div class="kpi"><b class="mono">0</b><span>phantom trades, 0 sequence gaps</span></div>
+    <div class="kpi"><b class="mono">147 &rarr; 0</b><span>failures fixed by the completeness horizon</span></div>
+  </div>
+  <div class="two">
+    <div class="panel"><h2>Can the validation fail? (BTC, 573 snapshots)</h2>
+      <table class="mono">
+        <tr><th>level updates dropped on purpose</th><th>snapshots that fail</th></tr>
+        <tr><td>none</td><td>0</td></tr>
+        <tr><td>1 in 100,000 (6 of 648,000)</td><td>8</td></tr>
+        <tr><td>1 in 20,000</td><td>87</td></tr>
+        <tr><td>1 in 2,000</td><td>441</td></tr>
+      </table>
+      <p class="note">A check that cannot fail proves nothing, so the harness injects faults and requires detection.</p></div>
+    <div class="panel"><h2>Fill intensity: Avellaneda-Stoikov k (per tick), fitted from real trades</h2>
+      <table class="mono">
+        <tr><th>session</th><th>k</th><th>1/k (ticks)</th><th>fit R&sup2;</th></tr>
+        <tr><td>BTCUSDT, 30 min</td><td>0.00243</td><td>411</td><td>0.98</td></tr>
+        <tr><td>ETHUSDT, 10 min</td><td>0.0584</td><td>17</td><td>0.996</td></tr>
+        <tr><td>ETHUSDT, 25 min</td><td>0.0289</td><td>35</td><td>0.95</td></tr>
+      </table>
+      <p class="note">k differs 12 to 24 times between assets and 2 times between two sessions of the same asset: a calibrated
+        parameter is a regime, not a constant.</p></div>
+  </div>
+
+  <div class="panel" style="margin-top:14px">
+    <h2>Market-making on BTCUSDT, 30 minutes (10 ms latency, no fees, queue-aware fills)</h2>
+    <table class="mono">
+      <tr><th>strategy</th><th>fills</th><th>total PnL (USDT)</th><th>95% CI</th><th>bps of notional</th></tr>
+      <tr><td>join the touch</td><td>1,246</td><td>-51.5</td><td>[-76.3, -27.7]</td><td>-1.40</td></tr>
+      <tr><td>fixed spread, 2 ticks</td><td>512</td><td>-44.5</td><td>[-71.8, -18.8]</td><td>-1.78</td></tr>
+      <tr><td>fixed spread, 412 ticks (A-S width)</td><td>201</td><td>-26.7</td><td>[-46.1, -9.1]</td><td>-1.60</td></tr>
+      <tr><td>A-S, low risk aversion</td><td>217</td><td>-24.6</td><td>[-44.4, -6.5]</td><td>-1.46</td></tr>
+      <tr><td>A-S, high risk aversion</td><td>66</td><td>-7.0</td><td>[-9.9, -4.4]</td><td>-1.44</td></tr>
+    </table>
+    <p class="note">Intervals are moving-block bootstrap on 30-second PnL increments. The A-S advantage over the equal-width fixed spread is +19.8 USDT
+      at high risk aversion (paired 95% CI [+2.5, +38.2]) and not significant elsewhere; it comes from trading far less (0.58 BTC vs 1.99).</p>
+  </div>
+
+  <div class="figs" style="margin-top:14px">
+    <div class="fig"><img loading="lazy" src="../docs/img/mm_pnl_decomposition_btcusdt_a.png" alt="PnL decomposition by strategy on BTCUSDT">
+      <p>Spread capture is cents to a few dollars; inventory PnL is negative in every run.</p></div>
+    <div class="fig"><img loading="lazy" src="../docs/img/mm_adverse_selection_btcusdt_a.png" alt="Mid-price drift after fills">
+      <p>After a fill the mid moves $4.7 to $10 against the position within 1 s, against an unconditional 1 s standard deviation of $3.49.</p></div>
+    <div class="fig"><img loading="lazy" src="../docs/img/mm_fill_model_btcusdt_a.png" alt="Queue-aware versus optimistic fills">
+      <p>A naive "touch means filled" backtest counts 7 times the fills for touch quoting (8,693 vs 1,246).</p></div>
+    <div class="fig"><img loading="lazy" src="../docs/img/mm_fees_btcusdt_a.png" alt="PnL versus fee">
+      <p>At 10 bps every strategy loses $55 to $421 in half an hour; even a 0.5 bps rebate leaves all of them negative.</p></div>
+    <div class="fig"><img loading="lazy" src="../docs/img/mm_timeseries_btcusdt_a.png" alt="PnL and inventory over the session">
+      <p>A-S at high risk aversion keeps inventory near zero and bleeds slowest.</p></div>
+    <div class="fig"><img loading="lazy" src="../docs/img/mm_pnl_decomposition_ethusdt_c.png" alt="PnL decomposition on ETHUSDT">
+      <p>ETHUSDT, 25 minutes: the same shape, and no A-S advantage that survives its confidence interval.</p></div>
+  </div>
+
+  <div class="panel" style="margin-top:14px">
+    <h2>What to take from it</h2>
+    <ul class="tk">
+      <li>Passive quoting near the touch loses roughly 1.3 to 2 basis points of the notional it trades, on both assets, whichever strategy is used.
+        The fills it gets are the ones where price is about to move against it.</li>
+      <li>Only a maker rebate above about 1.5 bps, or a real information edge, would change the sign.</li>
+      <li>Avellaneda-Stoikov is an inventory-control tool: it loses less by trading less, it does not earn more per trade.</li>
+      <li>How you model fills changes the answer where retail backtests tend to quote: at the touch.</li>
+      <li>This is about an hour of data on two assets. The limits are part of the result (docs/RESEARCH.md).</li>
+    </ul>
+  </div>
+</section>
 </main>
 
+<script src="engine.js"></script>
 <script>
 "use strict";
-/* ---------------- Engine: price-time priority book (JS port of the C++ semantics) ---------------- */
-class Book {
-  constructor() { this.reset(); }
-  reset() {
-    this.bids = new Map(); this.asks = new Map();   // price -> array of orders (FIFO)
-    this.byId = new Map(); this.nextId = 1; this.events = [];
-    this.trades = 0; this.volume = 0; this.msgs = 0; this.record = true;
+/* ---------------- Engine: the real C++ OrderBook, compiled to WebAssembly (ui/engine.js) ---------------- */
+const REASON = ["", "invalid order id", "invalid quantity", "invalid price", "duplicate order id", "unknown order", "unknown symbol",
+  "post-only order would have traded", "book full", "user cancel", "IOC remainder", "FOK: not fully fillable", "self trade"];
+const EV = { ACCEPTED: 1, REJECTED: 2, TRADE: 3, CANCELED: 4, MODIFIED: 5 };
+
+class Engine {
+  constructor(M) {
+    this.M = M;
+    const w = (n, r, a) => M.cwrap(n, r, a);
+    this._init = w("ex_init", null, []);
+    this._submit = w("ex_submit", "number", ["number", "number", "number", "number", "number", "number", "number", "number", "number"]);
+    this._events = w("ex_events", "number", []); this._evSize = w("ex_event_size", "number", []);
+    this._bid = w("ex_best_bid", "number", []); this._ask = w("ex_best_ask", "number", []);
+    this._count = w("ex_order_count", "number", []);
+    this._depth = w("ex_depth", "number", ["number", "number"]); this._depthPtr = w("ex_depth_ptr", "number", []);
+    this._queue = w("ex_queue", "number", ["number", "number"]); this._queuePtr = w("ex_queue_ptr", "number", []);
+    this._find = w("ex_find", "number", ["number", "number", "number", "number"]);
+    this._bench = w("ex_bench", "number", ["number", "number"]);
+    this._out = M._malloc(12);
+    this.reset();
   }
-  emit(e) { if (this.record) this.events.push(e); }
-  bestBid() { let b = -Infinity; for (const p of this.bids.keys()) if (p > b) b = p; return b === -Infinity ? null : b; }
-  bestAsk() { let a = Infinity; for (const p of this.asks.keys()) if (p < a) a = p; return a === Infinity ? null : a; }
-  crosses(side, limit) {
-    if (side === "buy") { const a = this.bestAsk(); return a !== null && a <= limit; }
-    const b = this.bestBid(); return b !== null && b >= limit;
-  }
-  fillable(side, limit, qty) {
-    let avail = 0;
-    const book = side === "buy" ? this.asks : this.bids;
-    for (const [p, q] of book) {
-      if (side === "buy" ? p <= limit : p >= limit) for (const o of q) avail += o.qty;
+  reset() { this._init(); this.nextId = 1; this.events = []; this.trades = 0; this.volume = 0; }
+  bestBid() { const b = this._bid(); return b < 0 ? null : b; }
+  bestAsk() { const a = this._ask(); return a < 0 ? null : a; }
+  orderCount() { return this._count(); }
+  _send(type, id, o) {
+    const n = this._submit(type, id, o.side === "sell" ? 1 : 0, o.type === "market" ? 1 : 0,
+      o.tif === "ioc" ? 1 : o.tif === "fok" ? 2 : 0, o.post ? 1 : 0, o.price | 0, o.qty | 0, o.owner === "sim" ? 2 : 1);
+    const dv = new DataView(this.M.HEAPU8.buffer), base = this._events(), sz = this._evSize(), out = [];
+    for (let i = 0; i < n; i++) {
+      const p = base + i * sz;
+      const e = { id: Number(dv.getBigUint64(p, true)), maker: Number(dv.getBigUint64(p + 8, true)), price: Number(dv.getBigInt64(p + 16, true)),
+                  qty: dv.getUint32(p + 24, true), leaves: dv.getUint32(p + 28, true), type: dv.getUint8(p + 36), reason: dv.getUint8(p + 37),
+                  side: dv.getUint8(p + 38) === 0 ? "buy" : "sell" };
+      if (e.type === EV.TRADE) { this.trades++; this.volume += e.qty; }
+      out.push(e);
     }
-    return avail >= qty;
+    this.events.push(...out);
+    return out;
   }
-  add({ side, type, price, qty, tif = "day", post = false, owner = "you" }) {
-    this.msgs++;
-    if (!(qty > 0)) return this.reject("quantity must be positive");
-    const market = type === "market";
-    const limit = market ? (side === "buy" ? Infinity : -Infinity) : price;
-    if (!market && !Number.isFinite(price)) return this.reject("price required for limit orders");
-    if (post && this.crosses(side, limit)) return this.reject("post-only order would have traded");
+  add(o) {
     const id = this.nextId++;
-    this.emit({ t: "accepted", id, side, price: market ? null : price, qty });
-    if (tif === "fok" && !this.fillable(side, limit, qty)) {
-      this.emit({ t: "canceled", id, qty, why: "FOK: not fully fillable" });
-      return { id, filled: 0 };
-    }
-    let left = qty;
-    const opp = side === "buy" ? this.asks : this.bids;
-    while (left > 0 && this.crosses(side, limit)) {
-      const px = side === "buy" ? this.bestAsk() : this.bestBid();
-      const q = opp.get(px);
-      while (left > 0 && q.length) {
-        const m = q[0], fill = Math.min(left, m.qty);
-        m.qty -= fill; left -= fill; this.trades++; this.volume += fill;
-        this.emit({ t: "trade", price: px, qty: fill, taker: id, maker: m.id, side });
-        if (m.qty === 0) { q.shift(); this.byId.delete(m.id); }
-      }
-      if (!q.length) opp.delete(px);
-    }
-    if (left > 0) {
-      if (market || tif !== "day") this.emit({ t: "canceled", id, qty: left, why: market ? "market order: book exhausted" : "IOC remainder" });
-      else this.rest({ id, side, price, qty: left, owner });
-    }
-    return { id, filled: qty - left };
+    const ev = this._send(1, id, o);
+    const rej = ev.find(e => e.type === EV.REJECTED);
+    const filled = ev.filter(e => e.type === EV.TRADE && e.id === id).reduce((s, e) => s + e.qty, 0);
+    return rej ? { id: null, why: REASON[rej.reason] } : { id, filled, resting: this.find(id) !== null };
   }
-  rest(o) {
-    const book = o.side === "buy" ? this.bids : this.asks;
-    if (!book.has(o.price)) book.set(o.price, []);
-    book.get(o.price).push(o); this.byId.set(o.id, o);
+  cancel(id) { const ev = this._send(2, id, { side: "buy", qty: 0, price: 0 }); return !ev.some(e => e.type === EV.REJECTED); }
+  modify(id, price, qty) { const ev = this._send(3, id, { side: "buy", price, qty }); const r = ev.find(e => e.type === EV.REJECTED); return r ? REASON[r.reason] : null; }
+  find(id) {
+    const q = this._find(id, this._out, this._out + 4, this._out + 8);
+    if (!q) return null;
+    const h = this.M.HEAP32; const i = this._out >> 2;
+    return { qty: q, price: h[i], side: h[i + 1] === 0 ? "buy" : "sell", owner: this.M.HEAPU32[i + 2] === 2 ? "sim" : "you" };
   }
-  cancel(id) {
-    this.msgs++;
-    const o = this.byId.get(id); if (!o) return false;
-    const book = o.side === "buy" ? this.bids : this.asks, q = book.get(o.price);
-    q.splice(q.indexOf(o), 1); if (!q.length) book.delete(o.price);
-    this.byId.delete(id);
-    this.emit({ t: "canceled", id, qty: o.qty, why: "user cancel" });
-    return true;
-  }
-  reject(why) { this.emit({ t: "rejected", why }); return { id: null, why }; }
   levels(side, n) {
-    const book = side === "buy" ? this.bids : this.asks;
-    const prices = [...book.keys()].sort((a, b) => side === "buy" ? b - a : a - b).slice(0, n);
-    return prices.map(p => ({ price: p, qty: book.get(p).reduce((s, o) => s + o.qty, 0), orders: book.get(p) }));
+    const k = this._depth(side === "sell" ? 1 : 0, n), p = this._depthPtr() >> 2, h = this.M.HEAP32, out = [];
+    for (let i = 0; i < k; i++) out.push({ price: h[p + 3 * i], qty: h[p + 3 * i + 1] >>> 0, orders: h[p + 3 * i + 2] });
+    return out;
   }
+  queueAt(side, price) {
+    const k = this._queue(side === "sell" ? 1 : 0, price), dv = new DataView(this.M.HEAPU8.buffer), base = this._queuePtr(), out = [];
+    for (let i = 0; i < k; i++) out.push({ id: Number(dv.getBigUint64(base + 16 * i, true)), qty: dv.getUint32(base + 16 * i + 8, true), owner: dv.getUint32(base + 16 * i + 12, true) === 2 ? "sim" : "you" });
+    return out;
+  }
+  bench(n) { return this._bench(n, 42); }
 }
 
 /* ---------------- UI ---------------- */
 const $ = id => document.getElementById(id);
-const book = new Book();
-let mid = 1000, flowTimer = null;
+let book, mid = 1000, flowTimer = null;
+const mine = new Set(), simIds = [];
 
 function fmt(n) { return n.toLocaleString(); }
 function render() {
   const asks = book.levels("sell", 10), bids = book.levels("buy", 10);
   const maxQ = Math.max(1, ...asks.map(l => l.qty), ...bids.map(l => l.qty));
-  const row = (l, cls) => {
-    const tip = l.orders.map((o, i) => `${i + 1}. #${o.id} ${o.owner} ${o.qty}`).join("\n");
-    return `<div class="row mono ${cls}" title="${tip}"><div class="bar" style="width:${(100 * l.qty / maxQ).toFixed(1)}%"></div>` +
-           `<span class="px">${l.price}</span><span>${fmt(l.qty)}</span><span>${l.orders.length}</span></div>`;
-  };
-  $("asks").innerHTML = asks.slice().reverse().map(l => row(l, "ask")).join("") || '<div class="note">no asks</div>';
-  $("bids").innerHTML = bids.map(l => row(l, "bid")).join("") || '<div class="note">no bids</div>';
+  const row = (l, cls, side) =>
+    `<div class="row mono ${cls}" data-side="${side}" data-px="${l.price}"><div class="bar" style="width:${(100 * l.qty / maxQ).toFixed(1)}%"></div>` +
+    `<span class="px">${l.price}</span><span>${fmt(l.qty)}</span><span>${l.orders}</span></div>`;
+  $("asks").innerHTML = asks.slice().reverse().map(l => row(l, "ask", "sell")).join("") || '<div class="note">no asks</div>';
+  $("bids").innerHTML = bids.map(l => row(l, "bid", "buy")).join("") || '<div class="note">no bids</div>';
   const bb = book.bestBid(), ba = book.bestAsk();
-  $("spread-row").textContent = bb !== null && ba !== null ? `spread ${ba - bb}  ·  mid ${((bb + ba) / 2).toFixed(1)}` : "one-sided or empty book";
-  $("k-mid").textContent = bb !== null && ba !== null ? ((bb + ba) / 2).toFixed(1) : "n/a";
-  $("k-spread").textContent = bb !== null && ba !== null ? ba - bb : "n/a";
+  const two = bb !== null && ba !== null;
+  $("spread-row").textContent = two ? `spread ${ba - bb}  ·  mid ${((bb + ba) / 2).toFixed(1)}` : "one-sided or empty book";
+  $("k-mid").textContent = two ? ((bb + ba) / 2).toFixed(1) : "n/a";
+  $("k-spread").textContent = two ? ba - bb : "n/a";
   $("k-trades").textContent = fmt(book.trades); $("k-vol").textContent = fmt(book.volume);
-  $("k-orders").textContent = fmt(book.byId.size);
+  $("k-orders").textContent = fmt(book.orderCount());
 
-  const mine = [...book.byId.values()].filter(o => o.owner === "you");
-  $("mine").innerHTML = mine.length ? mine.map(o =>
-    `<div class="o mono"><span class="${o.side === "buy" ? "buy-t" : "sell-t"}">${o.side} ${o.qty} @ ${o.price}</span>` +
-    `<button class="x" data-id="${o.id}" aria-label="cancel order ${o.id}">cancel</button></div>`).join("") : '<span class="note">none yet</span>';
+  const live = [];
+  for (const id of [...mine]) { const o = book.find(id); if (o) live.push({ id, ...o }); else mine.delete(id); }
+  $("mine").innerHTML = live.length ? live.map(o =>
+    `<div class="o mono"><span class="${o.side === "buy" ? "buy-t" : "sell-t"}">#${o.id} ${o.side} ${o.qty} @ ${o.price}</span>` +
+    `<span><button class="x" data-act="half" data-id="${o.id}" title="shrink size: keeps your place in the queue">-50%</button> ` +
+    `<button class="x" data-act="tick" data-id="${o.id}" title="reprice: goes to the back of the queue">+1 tick</button> ` +
+    `<button class="x" data-act="cancel" data-id="${o.id}">cancel</button></span></div>`).join("") : '<span class="note">none yet</span>';
 
   const evs = book.events.splice(0);
   for (const e of evs) {
-    if (e.t === "trade") {
+    if (e.type === EV.TRADE) {
       const d = document.createElement("div");
       d.innerHTML = `<span class="${e.side === "buy" ? "buy-t" : "sell-t"}">${e.side === "buy" ? "▲" : "▼"} ${e.price}</span><span>${fmt(e.qty)}</span>`;
       const tape = $("tape"); if (tape.querySelector(".note")) tape.innerHTML = ""; tape.prepend(d);
       while (tape.children.length > 60) tape.lastChild.remove();
       mid = e.price;
     }
-    if (e.t !== "trade" || e.taker) {
-      const d = document.createElement("div");
-      d.textContent = e.t === "trade" ? `trade ${e.qty} @ ${e.price} (#${e.taker} took #${e.maker})`
-        : e.t === "accepted" ? `accepted #${e.id} ${e.side} ${e.qty}${e.price !== null ? " @ " + e.price : " market"}`
-        : e.t === "canceled" ? `canceled #${e.id} (${e.qty}): ${e.why}` : `REJECTED: ${e.why}`;
-      $("log").prepend(d); while ($("log").children.length > 80) $("log").lastChild.remove();
-    }
+    const d = document.createElement("div");
+    d.textContent = e.type === EV.TRADE ? `trade ${e.qty} @ ${e.price} (#${e.id} took #${e.maker}, leaves ${e.leaves})`
+      : e.type === EV.ACCEPTED ? `accepted #${e.id} ${e.side} ${e.qty}${e.price ? " @ " + e.price : " market"}`
+      : e.type === EV.MODIFIED ? `modified #${e.id}: ${e.qty} @ ${e.price}`
+      : e.type === EV.CANCELED ? `canceled #${e.id} (${e.qty}): ${REASON[e.reason]}` : `REJECTED #${e.id}: ${REASON[e.reason]}`;
+    $("log").prepend(d); while ($("log").children.length > 80) $("log").lastChild.remove();
   }
 }
 function submit(side) {
   const type = $("f-type").value;
-  const r = book.add({ side, type, price: +$("f-price").value, qty: +$("f-qty").value, tif: $("f-tif").value, post: $("f-post").checked });
-  $("msg").textContent = r.id === null ? "Rejected: " + r.why : `Order #${r.id} sent; ${r.filled} lots filled immediately.`;
+  const r = book.add({ side, type, price: +$("f-price").value, qty: +$("f-qty").value, tif: $("f-tif").value, post: $("f-post").checked, owner: "you" });
+  if (r.id !== null && r.resting) mine.add(r.id);
+  $("msg").textContent = r.id === null ? "Rejected: " + r.why : `Order #${r.id} sent; ${r.filled} lots filled immediately${r.resting ? ", rest is in the book" : ""}.`;
   render();
 }
 $("b-buy").onclick = () => submit("buy"); $("b-sell").onclick = () => submit("sell");
-$("mine").onclick = e => { const id = e.target.dataset.id; if (id) { book.cancel(+id); render(); } };
+$("mine").onclick = e => {
+  const id = +e.target.dataset.id, act = e.target.dataset.act; if (!id) return;
+  const o = book.find(id); if (!o) return;
+  if (act === "cancel") book.cancel(id);
+  else if (act === "half") book.modify(id, o.price, Math.max(1, o.qty >> 1));
+  else if (act === "tick") book.modify(id, o.side === "buy" ? o.price + 1 : o.price - 1, o.qty);
+  render();
+};
+document.querySelector(".ladder").addEventListener("mouseover", e => {
+  const r = e.target.closest(".row[data-px]"); if (!r) return;
+  r.title = book.queueAt(r.dataset.side, +r.dataset.px).map((o, i) => `${i + 1}. #${o.id} ${o.owner} ${o.qty}`).join("\n");
+});
 $("f-type").onchange = () => { $("f-price").disabled = $("f-type").value === "market"; };
 
 /* random flow: passive quotes around a wandering mid, plus occasional marketable orders */
@@ -359,10 +450,10 @@ function randomOrder() {
 function flowTick() {
   const n = +$("f-speed").value;
   for (let i = 0; i < n; i++) {
-    if (Math.random() < .3 && book.byId.size > 30) {
-      const ids = [...book.byId.values()].filter(o => o.owner === "sim");
-      if (ids.length) book.cancel(ids[rnd(ids.length)].id);
-    } else book.add(randomOrder());
+    if (Math.random() < .3 && simIds.length > 30) {
+      const k = rnd(simIds.length), id = simIds[k]; simIds[k] = simIds[simIds.length - 1]; simIds.pop();
+      book.cancel(id);
+    } else { const r = book.add(randomOrder()); if (r.id !== null && r.resting) simIds.push(r.id); }
   }
   render();
 }
@@ -370,23 +461,18 @@ $("b-flow").onclick = () => {
   if (flowTimer) { clearInterval(flowTimer); flowTimer = null; $("b-flow").textContent = "Start random flow"; }
   else { flowTimer = setInterval(flowTick, 200); $("b-flow").textContent = "Stop random flow"; }
 };
-$("b-reset").onclick = () => { book.reset(); mid = 1000; $("tape").innerHTML = '<span class="note">no trades yet</span>'; $("log").innerHTML = ""; render(); };
+$("b-reset").onclick = () => { book.reset(); mine.clear(); simIds.length = 0; mid = 1000; seed(); $("tape").innerHTML = '<span class="note">no trades yet</span>'; $("log").innerHTML = ""; render(); };
 $("b-bench").onclick = () => {
-  const b = new Book(); b.record = false; let m = 1000, n = 300000;
-  const t0 = performance.now();
-  for (let i = 0; i < n; i++) {
-    m += Math.random() < .1 ? (Math.random() < .5 ? 1 : -1) : 0;
-    const side = Math.random() < .5 ? "buy" : "sell", cross = Math.random() < .1, d = 1 + rnd(8);
-    b.add({ side, type: "limit", price: side === "buy" ? m + (cross ? d : -d) : m - (cross ? d : -d), qty: 50 * (1 + rnd(6)) });
-    if (b.byId.size > 4000 && Math.random() < .5) { const k = b.byId.keys().next().value; b.cancel(k); }
-  }
-  const s = (performance.now() - t0) / 1000;
-  $("bench-out").textContent = `${(n / s / 1e6).toFixed(2)} M orders/s in this browser (${b.trades.toLocaleString()} trades)`;
+  $("bench-out").textContent = "running...";
+  setTimeout(() => {
+    const t0 = performance.now(), rate = book.bench(1000000), s = (performance.now() - t0) / 1000;
+    $("bench-out").textContent = `${(rate / 1e6).toFixed(1)} M orders/s (1,000,000 orders in ${s.toFixed(2)} s, in this browser)`;
+  }, 20);
 };
 
 /* ---------------- Results charts (numbers copied from BENCHMARKS.md) ---------------- */
 const impls = ["ref (std::map)", "aos-scatter", "aos (shipped)", "soa", "hybrid"];
-function bars(id, vals, unit, higherBetter, digits = 1) {
+function bars(id, vals, unit, digits = 1) {
   const max = Math.max(...vals);
   $(id).innerHTML = vals.map((v, i) => {
     const cls = i === 0 ? "neutral" : (i === 2 ? "win" : "");
@@ -394,28 +480,34 @@ function bars(id, vals, unit, higherBetter, digits = 1) {
            `<span class="val mono">${v.toFixed(digits)}${unit}</span></div>`;
   }).join("");
 }
-bars("ch-thr", [9.68, 11.41, 26.31, 24.11, 25.17], "", true, 2);
-bars("ch-lat", [119, 177, 52, 53, 50], " ns", false, 0);
-bars("ch-d1", [9.19, 4.23, 3.99, 8.35, 4.17], " M", false, 2);
-bars("ch-ll", [0.93, 1.65, 1.48, 5.22, 1.76], " M", false, 2);
+bars("ch-thr", [9.68, 11.41, 26.31, 24.11, 25.17], "", 2);
+bars("ch-lat", [119, 177, 52, 53, 50], " ns", 0);
+bars("ch-d1", [9.19, 4.23, 3.99, 8.35, 4.17], " M", 2);
+bars("ch-ll", [0.93, 1.65, 1.48, 5.22, 1.76], " M", 2);
 
 /* ---------------- tabs & theme ---------------- */
 document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
   document.querySelectorAll(".tab").forEach(x => x.setAttribute("aria-selected", x === t));
-  for (const n of ["book", "results", "how"]) $("tab-" + n).classList.toggle("hidden", n !== t.dataset.tab);
+  for (const n of ["book", "results", "real", "how"]) $("tab-" + n).classList.toggle("hidden", n !== t.dataset.tab);
 });
 $("theme").onclick = () => {
   const cur = document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
   document.documentElement.dataset.theme = cur === "dark" ? "light" : "dark";
 };
 
-/* seed a small book so the page isn't empty */
-for (let i = 1; i <= 6; i++) {
-  book.add({ side: "buy", type: "limit", price: 1000 - i, qty: 100 * i, owner: "sim" });
-  book.add({ side: "sell", type: "limit", price: 1000 + i, qty: 100 * i, owner: "sim" });
+function seed() {
+  for (let i = 1; i <= 6; i++) {
+    const a = book.add({ side: "buy", type: "limit", price: 1000 - i, qty: 100 * i, owner: "sim" });
+    const b = book.add({ side: "sell", type: "limit", price: 1000 + i, qty: 100 * i, owner: "sim" });
+    simIds.push(a.id, b.id);
+  }
+  $("f-price").value = 1001;
 }
-$("f-price").value = 1001;
-render();
+if (typeof createEngine !== "function") {
+  $("msg").textContent = "engine.js failed to load. Run scripts/build_wasm.sh or use a checkout that includes ui/engine.js.";
+} else {
+  createEngine().then(M => { book = new Engine(M); seed(); render(); $("engine-badge").textContent = "engine: real C++ OrderBook, WebAssembly"; });
+}
 </script>
 </body>
 </html>
