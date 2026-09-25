@@ -22,12 +22,21 @@ jobs:
       - run: cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} ${{ matrix.flags }}
       - run: cmake --build build
       - run: ctest --test-dir build --output-on-failure
+
+      - name: real-data replay validates against exchange snapshots
+        run: |
+          ./build/exsim_mdreplay --in data/sample_btcusdt_30s.exmd | tee md.txt
+          grep -q "BOOK RECONSTRUCTION VALIDATED" md.txt
+          # the check must be able to fail: dropping level updates has to be detected
+          ./build/exsim_mdreplay --in data/sample_btcusdt_30s.exmd --inject-drop 50 | grep -q "fault injection detected"
+
       - name: replay determinism across implementations
         if: matrix.name == 'gcc release'
         run: |
           ./build/exsim_gen --out flow.bin --messages 2000000
           for b in ref aos soa hybrid; do ./build/exsim_replay --in flow.bin --book $b | grep digest; done | sort -u | tee digests.txt
           test "$(wc -l < digests.txt)" -eq 1
+
       - name: pipeline digest equals replay digest
         if: matrix.name == 'gcc release' || matrix.name == 'thread sanitizer'
         run: |
@@ -35,3 +44,47 @@ jobs:
           a=$(./build/exsim_replay --in flow.bin | awk '/^digest/ {print $2}')
           b=$(./build/exsim_pipeline --in flow.bin --warmup 0 | awk '/digest/ {print $4}')
           echo "replay=$a pipeline=$b"; test "$a" = "$b"
+
+      - name: gateway end to end (TCP correctness, kill -9 recovery, torn journal tail)
+        if: matrix.name == 'gcc release' || matrix.name == 'asan + ubsan'
+        run: bash scripts/e2e_gateway.sh build
+
+  liquibook:
+    name: agreement with Liquibook
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build g++-14
+      - run: bash scripts/fetch_liquibook.sh third_party/liquibook
+      - run: cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=g++-14 -DCMAKE_BUILD_TYPE=Release -DEXSIM_NATIVE=OFF -DEXSIM_LIQUIBOOK_DIR=$PWD/third_party/liquibook
+      - run: cmake --build build --target exsim_bench_liquibook
+      - name: both engines must produce the same trades and volume on identical input
+        run: ./build/exsim_bench_liquibook --messages 1000000 --reps 1 | tee lb.txt && grep -q IDENTICAL lb.txt
+
+  wasm:
+    name: WebAssembly engine
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mymindstorm/setup-emsdk@v14
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: bash scripts/build_wasm.sh
+      - run: node wasm/test_wasm.js
+      - name: browser UI end to end (headless Chrome, real engine)
+        run: python3 scripts/ui_e2e.py
+
+  analysis:
+    name: accounting audit of the committed study results
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install numpy pandas
+      - name: recompute PnL, inventory and spread capture from raw fills and compare with the simulator
+        run: |
+          for d in results/*/; do
+            name=$(basename "$d")
+            python scripts/verify_accounting.py --results "$d" --dataset "$name"
+          done
