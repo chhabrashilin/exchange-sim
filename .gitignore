@@ -1,7 +1,13 @@
 build/
 *.bin
 cachegrind.out.*
-results/
 .vscode/
 .idea/
 compile_commands.json
+third_party/
+__pycache__/
+
+# Captured market data is large and regenerable (scripts/capture_binance.py); only the small sample is tracked.
+data/*
+!data/README.md
+!data/sample_btcusdt_30s.exmd
