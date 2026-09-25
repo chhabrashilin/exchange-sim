@@ -52,6 +52,8 @@ endfunction()
 exsim_executable(exsim_gen      tools/exsim_gen.cpp)
 exsim_executable(exsim_replay   tools/exsim_replay.cpp)
 exsim_executable(exsim_pipeline tools/exsim_pipeline.cpp)
+exsim_executable(exsim_mdreplay tools/exsim_mdreplay.cpp)
+exsim_executable(exsim_mmsim    tools/exsim_mmsim.cpp)
 exsim_executable(exsim_bench    bench/exsim_bench.cpp)
 
 exsim_executable(exsim_tests
@@ -59,8 +61,26 @@ exsim_executable(exsim_tests
   tests/test_book.cpp
   tests/test_components.cpp
   tests/test_differential.cpp
-  tests/test_alloc.cpp)
+  tests/test_alloc.cpp
+  tests/test_mm.cpp
+  tests/test_journal_risk.cpp)
 
 enable_testing()
 add_test(NAME exsim_tests COMMAND exsim_tests)
 set_tests_properties(exsim_tests PROPERTIES TIMEOUT 600)  # a corrupted FIFO can loop forever
+
+# Optional head-to-head benchmark against Liquibook (scripts/fetch_liquibook.sh).
+set(EXSIM_LIQUIBOOK_DIR "" CACHE PATH "Path to a Liquibook checkout; enables exsim_bench_liquibook")
+if(EXSIM_LIQUIBOOK_DIR AND EXISTS "${EXSIM_LIQUIBOOK_DIR}/src/book/order_book.h")
+  add_executable(exsim_bench_liquibook bench/bench_liquibook.cpp "${EXSIM_LIQUIBOOK_DIR}/src/simple/simple_order.cpp")
+  target_include_directories(exsim_bench_liquibook SYSTEM PRIVATE "${EXSIM_LIQUIBOOK_DIR}/src")
+  target_link_libraries(exsim_bench_liquibook PRIVATE exsim exsim_flags)
+  target_compile_options(exsim_bench_liquibook PRIVATE -Wno-non-virtual-dtor)  # third-party base classes
+endif()
+
+# Order-entry gateway: needs epoll, so Linux only.
+exsim_executable(exsim_journal tools/exsim_journal.cpp)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  exsim_executable(exsim_server tools/exsim_server.cpp)
+  exsim_executable(exsim_client tools/exsim_client.cpp)
+endif()
