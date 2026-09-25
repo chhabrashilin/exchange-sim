@@ -1,0 +1,37 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "gcc release",       cxx: g++-14,     flags: "-DCMAKE_BUILD_TYPE=Release -DEXSIM_NATIVE=OFF -DEXSIM_WERROR=ON" }
+          - { name: "clang release",     cxx: clang++-18, flags: "-DCMAKE_BUILD_TYPE=Release -DEXSIM_NATIVE=OFF -DEXSIM_WERROR=ON" }
+          - { name: "asan + ubsan",      cxx: clang++-18, flags: "-DCMAKE_BUILD_TYPE=Debug -DEXSIM_SANITIZE=ON" }
+          - { name: "thread sanitizer",  cxx: clang++-18, flags: "-DCMAKE_BUILD_TYPE=RelWithDebInfo -DEXSIM_TSAN=ON" }
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build g++-14 clang-18
+      - run: cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} ${{ matrix.flags }}
+      - run: cmake --build build
+      - run: ctest --test-dir build --output-on-failure
+      - name: replay determinism across implementations
+        if: matrix.name == 'gcc release'
+        run: |
+          ./build/exsim_gen --out flow.bin --messages 2000000
+          for b in ref aos soa hybrid; do ./build/exsim_replay --in flow.bin --book $b | grep digest; done | sort -u | tee digests.txt
+          test "$(wc -l < digests.txt)" -eq 1
+      - name: pipeline digest equals replay digest
+        if: matrix.name == 'gcc release' || matrix.name == 'thread sanitizer'
+        run: |
+          ./build/exsim_gen --out flow.bin --messages 1000000
+          a=$(./build/exsim_replay --in flow.bin | awk '/^digest/ {print $2}')
+          b=$(./build/exsim_pipeline --in flow.bin --warmup 0 | awk '/digest/ {print $4}')
+          echo "replay=$a pipeline=$b"; test "$a" = "$b"
