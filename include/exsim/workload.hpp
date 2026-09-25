@@ -53,6 +53,9 @@ struct WorkloadConfig {
   std::uint32_t symbols = 8;
   std::uint64_t seed = 42;
   std::uint32_t target_live = 4096;  // steady-state resting orders per symbol
+  // Restrict to semantics every engine shares (Day/IOC limit orders and cancels): no modifies, FOK,
+  // post-only or true market orders (market orders become IOC limits priced through the book).
+  bool simple = false;
   BookConfig book{};
 };
 
@@ -125,7 +128,7 @@ inline std::vector<Command> generate_workload(const WorkloadConfig& cfg, Workloa
       c.type = MsgType::Cancel;
       c.order_id = rng.chance(0.01) ? 1 + rng.below(next_id) : s.live[rng.below(s.live.size())];
       ++mix.cancels;
-    } else if (!s.live.empty() && r < p_cancel + 0.05) {
+    } else if (!cfg.simple && !s.live.empty() && r < p_cancel + 0.05) {
       c.type = MsgType::Modify;
       c.order_id = s.live[rng.below(s.live.size())];
       const auto o = engine.book(sym).find_order(c.order_id);
@@ -146,7 +149,7 @@ inline std::vector<Command> generate_workload(const WorkloadConfig& cfg, Workloa
       c.owner = static_cast<OwnerId>(1 + rng.below(64));
       c.qty = rng.chance(0.1) ? static_cast<Qty>(1 + rng.below(99)) : 100u * (1u + std::min(rng.geometric(0.45), 49u));
       const double t = rng.uniform();
-      if (t < 0.02) {
+      if (t < 0.02 && !cfg.simple) {
         c.ord_type = OrdType::Market;
         ++mix.ioc_fok_market;
       } else {
@@ -163,10 +166,11 @@ inline std::vector<Command> generate_workload(const WorkloadConfig& cfg, Workloa
         if (t < 0.05) {
           c.tif = Tif::Ioc;
           ++mix.ioc_fok_market;
-        } else if (t < 0.06) {
+          if (cfg.simple && t < 0.02) c.price = buy ? hi : lo;  // the 'market' slice, as an IOC through the book
+        } else if (!cfg.simple && t < 0.06) {
           c.tif = Tif::Fok;
           ++mix.ioc_fok_market;
-        } else if (t < 0.09) {
+        } else if (!cfg.simple && t < 0.09) {
           c.flags = kFlagPostOnly;
         }
       }

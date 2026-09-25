@@ -1,6 +1,7 @@
 // Data structures and infrastructure, each checked against a trusted model.
 
 #include <atomic>
+#include <bit>
 #include <cmath>
 #include <set>
 #include <thread>
@@ -88,17 +89,22 @@ void index_matches_unordered_map() {
 TEST(order_index_scatter_matches_unordered_map) { index_matches_unordered_map<ScatterHash>(); }
 TEST(order_index_locality_matches_unordered_map) { index_matches_unordered_map<LocalityHash>(); }
 
-TEST(order_index_locality_survives_strided_keys) {
-  // Keys strided by the table size all share one home slot under LocalityHash: the documented
-  // worst case. It must stay correct (just slower).
+// Keys crafted against the fold in LocalityHash: with bits = log2(table size), key = (i << bits) | (i ^ C)
+// has fingerprint (key ^ (key >> bits)) = C in the low bits for every i, so all keys share ONE home slot.
+// This is the documented worst case of the locality hash. Correctness must survive it; only speed suffers.
+static std::uint64_t colliding_key(std::uint64_t i, int bits, std::uint64_t c) { return (i << bits) | (i ^ c); }
+
+TEST(order_index_locality_hash_stays_correct_under_a_worst_case_collision_attack) {
   OrderIndex<LocalityHash> idx(512);
-  const std::uint64_t stride = idx.slot_count();
-  auto key_of = [&](std::uint32_t slot) { return OrderId{1 + slot * stride}; };
-  for (std::uint32_t i = 0; i < 512; ++i) idx.insert(1 + i * stride, i);
-  for (std::uint32_t i = 0; i < 512; ++i) CHECK_EQ(idx.find(1 + i * stride, key_of), i);
-  for (std::uint32_t i = 0; i < 512; i += 2) CHECK_EQ(idx.erase(1 + i * stride, key_of), i);
-  for (std::uint32_t i = 1; i < 512; i += 2) CHECK_EQ(idx.find(1 + i * stride, key_of), i);
-  CHECK_EQ(idx.find(3, key_of), kNil);
+  const int bits = std::countr_zero(idx.slot_count());
+  const std::uint64_t C = 77;
+  auto key_of = [&](std::uint32_t slot) { return colliding_key(slot + 1, bits, C); };
+  for (std::uint32_t i = 0; i < 512; ++i) idx.insert(colliding_key(i + 1, bits, C), i);
+  // every key really does hash to the same home slot: consecutive inserts probe a chain of growing length
+  for (std::uint32_t i = 0; i < 512; ++i) CHECK_EQ(idx.find(colliding_key(i + 1, bits, C), key_of), i);
+  for (std::uint32_t i = 0; i < 512; i += 2) CHECK_EQ(idx.erase(colliding_key(i + 1, bits, C), key_of), i);
+  for (std::uint32_t i = 1; i < 512; i += 2) CHECK_EQ(idx.find(colliding_key(i + 1, bits, C), key_of), i);
+  CHECK_EQ(idx.find(colliding_key(9999, bits, C), key_of), kNil);
   CHECK_EQ(idx.size(), 256u);
 }
 
