@@ -14,10 +14,11 @@
 // message type. A global operator new hook counts heap allocations inside the timed region.
 //
 //   exsim_bench [--messages 5000000] [--symbols 8] [--seed 42] [--reps 7] [--impl ref,aos-scatter,aos,soa,hybrid]
-//               [--cpu 2] [--no-latency] [--spsc] [--spsc-items 50000000] [--max-orders N] [--levels N]
+//               [--cpu 2] [--no-latency] [--spsc] [--spsc-items 50000000] [--max-orders N] [--levels N] [--adversarial]
 
 #include <algorithm>
 #include <atomic>
+#include <bit>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -36,10 +37,12 @@
 #endif
 
 #include "../tools/args.hpp"
+#include "stats.hpp"
 #include "exsim/clock.hpp"
 #include "exsim/cpu.hpp"
 #include "exsim/latency_histogram.hpp"
 #include "exsim/matching_engine.hpp"
+#include "exsim/order_index.hpp"
 #include "exsim/sinks.hpp"
 #include "exsim/spsc_queue.hpp"
 #include "exsim/workload.hpp"
@@ -175,6 +178,50 @@ void bench_spsc(std::uint64_t items, int cpu_a, int cpu_b) {
               cpu_a, cpu_b, static_cast<double>(items) / s / 1e6, ok ? "checksum ok" : "CHECKSUM MISMATCH");
 }
 
+
+// Cost of the locality hash's weakness, measured. Lookup latency of the flat id index under three key
+// distributions, for both hash policies. "attack" keys are crafted against LocalityHash's fold so that
+// every key shares one home slot (see tests/test_components.cpp).
+template <class Hash>
+double index_ns_per_lookup(const std::vector<std::uint64_t>& keys, std::uint32_t capacity) {
+  OrderIndex<Hash> idx(capacity);
+  std::vector<std::uint64_t> slot_key(keys.size() + 1);
+  for (std::size_t i = 0; i < keys.size(); ++i) {
+    slot_key[i] = keys[i];
+    idx.insert(keys[i], static_cast<std::uint32_t>(i));
+  }
+  auto key_of = [&](std::uint32_t s) { return slot_key[s]; };
+  const int rounds = 200;
+  std::uint64_t sink = 0;
+  const auto t0 = std::chrono::steady_clock::now();
+  for (int r = 0; r < rounds; ++r)
+    for (std::uint64_t k : keys) sink += idx.find(k, key_of);
+  const double ns = std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count();
+  if (sink == 42) std::printf(" ");  // keep the loop alive
+  return ns / static_cast<double>(rounds * keys.size());
+}
+
+void bench_adversarial(std::uint32_t capacity) {
+  const int bits = std::countr_zero(std::bit_ceil(2ull * capacity));
+  const std::size_t n = 2048;
+  std::vector<std::uint64_t> seq(n), rnd(n), attack(n);
+  Rng rng(9);
+  for (std::size_t i = 0; i < n; ++i) {
+    seq[i] = i + 1;
+    rnd[i] = rng.next() | 1;
+    attack[i] = ((i + 1) << bits) | ((i + 1) ^ 77);
+  }
+  std::printf("\nid-index lookup cost, %zu live orders, capacity %u (ns per lookup)\n", n, capacity);
+  std::printf("| key pattern                 | locality hash | scatter hash |\n|-----------------------------|--------------:|-------------:|\n");
+  auto row = [&](const char* name, const std::vector<std::uint64_t>& k) {
+    std::printf("| %-27s | %13.1f | %12.1f |\n", name, index_ns_per_lookup<LocalityHash>(k, capacity),
+                index_ns_per_lookup<ScatterHash>(k, capacity));
+  };
+  row("sequential ids (exchange)", seq);
+  row("random 64-bit ids", rnd);
+  row("crafted against locality", attack);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -241,6 +288,13 @@ int main(int argc, char** argv) {
                 median(r.mps) / 1e6, 1e9 / b, ref_best > 0 ? b / ref_best : 0.0,
                 static_cast<unsigned long long>(r.allocs), static_cast<unsigned long long>(r.digest));
   }
+  if (!results.empty() && results[0].name == "ref") {
+    std::printf("\nspeedup over ref: median of paired interleaved reps, with 95%% bootstrap CI\n");
+    for (std::size_t i = 1; i < results.size(); ++i) {
+      const auto ci = bench::bootstrap_median_ci(bench::paired_ratios(results[i].mps, results[0].mps));
+      std::printf("  %-12s %5.2fx  (%.2fx to %.2fx)\n", results[i].name.c_str(), ci[0], ci[1], ci[2]);
+    }
+  }
   bool same = true;
   for (const auto& r : results) same &= r.digest == results[0].digest;
   std::printf("\nevent streams identical across implementations: %s (%llu trades)\n", same ? "YES" : "NO -- BUG",
@@ -260,6 +314,7 @@ int main(int argc, char** argv) {
     }
   }
 
+  if (args.has("adversarial")) bench_adversarial(cfg.max_orders);
   if (args.has("spsc")) bench_spsc(args.u64("spsc-items", 50'000'000), cpu, static_cast<int>(args.i64("cpu2", cpu + 2)));
   return same ? 0 : 1;
 }
