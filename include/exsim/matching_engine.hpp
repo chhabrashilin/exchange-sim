@@ -46,6 +46,6 @@ using AosScatterBook = OrderBook<AosStore, ScatterHash>;  // design point 1
 using AosBook = OrderBook<AosStore>;
 using SoaBook = OrderBook<SoaStore>;
 using HybridBook = OrderBook<HybridStore>;
-using DefaultBook = AosBook;  // best measured layout; see BENCHMARKS.md
+using DefaultBook = AosBook;  // fewest simulated cache misses; wall-clock ties with hybrid/soa (BENCHMARKS.md)
 
 }  // namespace exsim

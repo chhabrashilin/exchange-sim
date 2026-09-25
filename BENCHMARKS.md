@@ -22,13 +22,23 @@ jitter probe: 10.0 s on cpu 4 (pinned: yes)
   time lost to gaps > 1 us: 12.250%; gaps > 10 us: 14533 (1453.3 per second)
 ```
 
-The hypervisor takes the core away about 1,450 times a second, for up to 10.8 ms at a time. This
-has two consequences:
+The hypervisor takes the core away about 1,450 times a second, for up to 10.8 ms at a time. That was
+the quieter of the probes taken during this project:
 
-1. **Wall-clock throughput drifts by up to 2x between runs** (thermal and turbo budget, host load).
-   Repetitions are therefore interleaved round-robin across implementations, and best-of-N is the
-   headline figure (noise only ever adds time), with the median alongside. Ratios measured within
-   one run are trustworthy; absolute numbers move.
+| When | Time lost to gaps > 1 us | Gaps > 10 us per second |
+|---|---:|---:|
+| Campaign 1 (first benchmark run) | 12.3% | 1,453 |
+| Gateway and study sessions | 6.3% | 1,291 |
+| Campaign 2 (final benchmark run) | **37.2%** | 1,300 |
+
+This has two consequences:
+
+1. **Wall-clock throughput drifts between runs** (thermal and turbo budget, host load), and it did:
+   `aos` best-of-15 was 26.3 M msg/s in campaign 1 and 17.9 M msg/s in campaign 2, with the baseline
+   moving the same way (9.7 to 5.9). Repetitions are therefore interleaved round-robin across
+   implementations, best-of-N is the headline (noise only ever adds time), the median is reported
+   alongside, and speedups are the median of **paired** repetitions with a bootstrap interval. Ratios
+   were stable across campaigns (2.7x and 3.1x); absolute numbers move by ~30%.
 2. **Tail latency above roughly p99 measures the hypervisor, not the code.** Per-message engine
    percentiles are reported up to p99.9; pipeline tails are reported but attributed.
 
@@ -166,10 +176,91 @@ is the opposite: random access to whole records.
 | 16 B `{id, qty, next}` "matching" record + 16 B `{prev, level, owner, side}` "link" record + audit | +20% | +59% | rejected: cancel/modify/insert need both halves |
 | 32 B record of every engine-touched field + 16 B cold audit `{ts, orig_qty}` (shipped as `hybrid`) | +5% | +19% | read misses −7%, but the separate audit writes cost more than that saves |
 
-**Wall-clock doesn't separate the three layouts.** Best-of-15 spans 24.1–26.3 M msg/s and the
-medians invert the order. The extra D1 misses in SoA mostly hit L2, which is cheap. `aos` has the
-fewest simulated misses and the best best-of-N, so it is the default. The other two stay in the
-suite so nobody has to take the folklore on faith.
+**Wall-clock does not separate the three layouts.** Their bootstrap intervals overlap in both
+campaigns (campaign 2, speedup over `ref`: `aos` 3.11x [2.18, 3.85], `soa` 2.68x [2.18, 3.29], `hybrid`
+3.41x [1.60, 3.69]), and the ordering by best-of-N flips between campaigns. The extra D1 misses in
+SoA mostly hit L2, which is cheap. `aos` is the default because it has the fewest *simulated* misses,
+which is deterministic; that is a weaker claim than "fastest", and it is stated as such. The other two
+stay in the suite so nobody has to take the folklore on faith.
+
+### Campaign 2: the same suite on a noisier host (37% of the pinned core lost)
+
+5M messages, 15 interleaved reps. Absolute throughput is lower, ratios and conclusions hold.
+
+| Design point | M msg/s best | M msg/s median | speedup over `ref` (median of paired reps, 95% CI) | p50 / p99 per message |
+|---|---:|---:|---|---|
+| `ref` | 5.85 | 4.16 | 1.00x | 244 ns / 1,904 ns |
+| `aos-scatter` | 10.39 | 7.08 | 1.78x [1.66, 2.23] | 213 ns / 1,538 ns |
+| `aos` | 17.86 | 11.59 | 3.11x [2.18, 3.85] | 106 ns / 879 ns |
+| `soa` | 19.51 | 9.82 | 2.68x [2.18, 3.29] | 137 ns / 1,392 ns |
+| `hybrid` | 18.22 | 10.39 | 3.41x [1.60, 3.69] | 100 ns / 1,025 ns |
+
+The locality-hash step (`aos-scatter` to `aos`) is present in both campaigns (1.18x to 2.72x, and 1.78x
+to 3.11x). Latency percentiles roughly doubled with the noise (`aos` p50 52 ns to 106 ns), which is the
+reason latency is reported with the jitter probe next to it.
+
+## Head to head with Liquibook
+
+[Liquibook](https://github.com/enewhuis/liquibook) is an established open-source C++ matching engine
+(`std::multimap` levels, callbacks flushed after each operation). `exsim_bench_liquibook` runs both
+engines on the **identical** command stream, restricted to the semantics they share (Day and IOC limit
+orders plus cancels).
+
+**Correctness gate first.** Before any timing the two engines must agree on the number of trades and
+the total traded volume: **933,619 trades and 96,761,274 lots, identical**, on 3M commands over 8
+symbols. That is an independent cross-validation of this engine's matching.
+
+| 15 interleaved reps | best | median | worst |
+|---|---:|---:|---:|
+| exsim (`aos`) | 25.90 M msg/s | 18.87 | 10.92 |
+| Liquibook (`SimpleOrder`) | 1.07 M msg/s | 0.98 | 0.34 |
+
+**Speedup: 21.9x** (median of 15 paired reps, 95% bootstrap CI 18.5x to 24.8x). An earlier 9-rep run
+gave 17.6x [14.8, 18.5]. Read this as "a conventional design costs this much on this workload", not as
+a like-for-like feature comparison: Liquibook also supports stop orders, depth tracking and
+per-operation callbacks, all of which cost time and none of which this engine does.
+
+## The locality hash: cost of its weakness
+
+`exsim_bench --adversarial` measures the id index directly (2,048 live orders, capacity 262,144, ns
+per lookup, cache-hot):
+
+| key pattern | locality hash | scatter hash (fmix64) |
+|---|---:|---:|
+| sequential ids (what an exchange issues) | 2.6 | 4.8 |
+| random 64-bit ids | 2.9 | 4.8 |
+| **crafted against the locality hash's fold** | **952.6** | 3.4 |
+
+Keys of the form `(i << bits) | (i ^ C)` all share one home slot under `k ^ (k >> bits)`, so lookups
+walk a chain of 2,048 entries: a ~300x slowdown here (an earlier, quieter run measured 767 ns vs 1.5 ns,
+~500x). Correctness is unaffected (`order_index_locality_hash_stays_correct_under_a_worst_case_collision_attack`).
+`fmix64` is not an answer either: it is invertible, so an informed attacker can craft collisions for it
+too. The defense is exchange-assigned order ids or a keyed hash. The gateway currently forwards client
+ids, which is listed as a limit.
+
+## Gateway (TCP, loopback, WSL2)
+
+`scripts/e2e_gateway.sh`: a client sends orders over TCP; the server decodes, journals (write-ahead),
+runs the risk gate and the engine, and returns execution reports. Numbers are loopback on a virtualized
+host with unpinned processes, so read them as an existence proof, not a tuned figure.
+
+| Test | Result |
+|---|---|
+| Correctness, 500,000 orders, closed loop | server output digest equals a local engine's, **IDENTICAL** (653,293 events) |
+| Closed-loop throughput (window 256) | 0.31 M commands/s (one syscall per command each way; not batched) |
+| Round trip at 100,000 msg/s offered, open loop | p50 27.5 us, p90 0.70 ms, p99 9.6 ms (latency measured from the *scheduled* send time) |
+| `kill -9` under load, then `--recover` | every acknowledged command recovered; recovered digest equals an independent offline replay |
+| Journal truncated mid-record | detected, discarded, journal reusable |
+
+The p50 is the true cost of a TCP round trip through the whole stack; the millisecond p99 is the
+hypervisor and unpinned scheduling, as the jitter probe predicts.
+
+## WebAssembly
+
+The same C++ engine, compiled with Emscripten (`-O3`, 62 KB with the module embedded), runs the browser
+UI. In Node it does **7.1 M orders/s** on a private book (500,000 random orders), about a quarter to a
+third of native: WebAssembly has no huge pages, no core pinning and a slower memory model. It is the same
+code, so the gap is the platform, not the algorithm.
 
 ## Replay determinism
 
@@ -188,7 +279,8 @@ never change results.
 
 ## SPSC ring
 
-Two pinned threads moving the 56-byte `Command`: **42.4 M items/s** (checksum-verified).
+Two pinned threads moving the 56-byte `Command`: **42.4 M items/s** in campaign 1 and 27.0 M items/s
+in campaign 2 (checksum-verified both times); the spread is host noise.
 
 ## Pipeline: feed → ring → engine → ring → market data
 
@@ -221,8 +313,13 @@ hypothesis.
 ## Reproducing
 
 ```bash
-scripts/bench.sh                 # build, design points, SPSC, replay determinism, pipeline
-scripts/cache_profile.sh         # perf counters if available, else cachegrind
-./build/release/exsim_pipeline --jitter 10    # how noisy is this machine?
-./build/release/exsim_bench --max-orders 16384 --impl aos-scatter,aos   # the footprint effect
+scripts/bench.sh                                   # design points, SPSC, replay determinism, pipeline, jitter
+scripts/cache_profile.sh                           # perf counters if available, else cachegrind
+build/release/exsim_pipeline --jitter 10           # how noisy is this machine right now?
+build/release/exsim_bench --max-orders 16384 --impl aos-scatter,aos   # the footprint effect
+build/release/exsim_bench --adversarial --messages 200000 --reps 1    # cost of the locality hash's weakness
+scripts/fetch_liquibook.sh                         # then re-run cmake with the checkout enabled:
+cmake -S . -B build/release -DEXSIM_LIQUIBOOK_DIR=third_party/liquibook
+cmake --build build/release --target exsim_bench_liquibook && build/release/exsim_bench_liquibook
+scripts/e2e_gateway.sh build/release               # gateway correctness, latency, crash recovery
 ```
