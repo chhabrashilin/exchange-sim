@@ -51,10 +51,53 @@ struct Modify {
   std::uint32_t qty;
   std::uint32_t reserved;
 };
+// Outbound execution report: one per Event, plus a Done marker after every command so a client knows
+// when the response to its request is complete. hdr.seq echoes the CLIENT's sequence number.
+inline constexpr std::uint8_t kReportType = 0x10;
+inline constexpr std::uint8_t kReportDone = 0xFF;  // event_type value marking "command finished"
+struct ExecReport {
+  Header hdr;
+  std::uint64_t order_id;
+  std::uint64_t maker_id;
+  std::int64_t price;
+  std::uint32_t qty;
+  std::uint32_t leaves;
+  std::uint8_t event_type;
+  std::uint8_t reason;
+  std::uint8_t side;
+  std::uint8_t request;
+  std::uint32_t reserved;
+};
 #pragma pack(pop)
 
 static_assert(sizeof(Header) == 16 && sizeof(NewOrder) == 48 && sizeof(Cancel) == 24 && sizeof(Modify) == 40);
+static_assert(sizeof(ExecReport) == 56);
 inline constexpr std::size_t kMaxMessageSize = sizeof(NewOrder);
+inline constexpr std::size_t kReportSize = sizeof(ExecReport);
+
+inline std::size_t encode_report(const Event& e, std::uint64_t client_seq, std::byte* out) noexcept {
+  const ExecReport r{Header{static_cast<std::uint16_t>(sizeof(ExecReport)), kReportType, kVersion, e.symbol, client_seq},
+                     e.order_id, e.maker_id, e.price, e.qty, e.leaves, static_cast<std::uint8_t>(e.type),
+                     static_cast<std::uint8_t>(e.reason), static_cast<std::uint8_t>(e.side),
+                     static_cast<std::uint8_t>(e.request), 0};
+  std::memcpy(out, &r, sizeof r);
+  return sizeof r;
+}
+inline std::size_t encode_done(SymbolId symbol, std::uint64_t client_seq, std::byte* out) noexcept {
+  const ExecReport r{Header{static_cast<std::uint16_t>(sizeof(ExecReport)), kReportType, kVersion, symbol, client_seq},
+                     0, 0, 0, 0, 0, kReportDone, 0, 0, 0, 0};
+  std::memcpy(out, &r, sizeof r);
+  return sizeof r;
+}
+// Rebuilds the Event a report was made from. Returns false for Done markers.
+inline bool report_to_event(const ExecReport& r, Event& e) noexcept {
+  if (r.event_type == kReportDone) return false;
+  e = Event{};
+  e.order_id = r.order_id, e.maker_id = r.maker_id, e.price = r.price, e.qty = r.qty, e.leaves = r.leaves;
+  e.symbol = r.hdr.symbol, e.type = static_cast<EventType>(r.event_type), e.reason = static_cast<Reason>(r.reason);
+  e.side = static_cast<Side>(r.side), e.request = static_cast<MsgType>(r.request);
+  return true;
+}
 
 enum class DecodeStatus : std::uint8_t {
   Ok,
