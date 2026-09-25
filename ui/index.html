@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>exchange-sim Explorer</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #14181f; --muted: #667085; --line: #e3e6eb;
+    --bid: #0f9d68; --bid-bg: rgba(15,157,104,.16); --ask: #d6453d; --ask-bg: rgba(214,69,61,.16);
+    --accent: #2f5bea; --warn: #b7791f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0e1116; --panel: #171b22; --ink: #e8ebf0; --muted: #8b95a5; --line: #262c36;
+      --bid: #34c38f; --bid-bg: rgba(52,195,143,.18); --ask: #f0655d; --ask-bg: rgba(240,101,93,.18);
+      --accent: #6d8dff; --warn: #e0a84a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0e1116; --panel: #171b22; --ink: #e8ebf0; --muted: #8b95a5; --line: #262c36;
+    --bid: #34c38f; --bid-bg: rgba(52,195,143,.18); --ask: #f0655d; --ask-bg: rgba(240,101,93,.18);
+    --accent: #6d8dff; --warn: #e0a84a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 14px 16px;
+           border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { font-size: 16px; margin: 0; font-weight: 650; letter-spacing: .2px; }
+  header .sub { color: var(--muted); font-size: 12.5px; }
+  nav { margin-left: auto; display: flex; gap: 6px; }
+  button, select, input { font: inherit; color: inherit; }
+  .tab, .btn { border: 1px solid var(--line); background: var(--panel); padding: 6px 12px; border-radius: 8px; cursor: pointer; }
+  .tab[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn:hover, .tab:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.buy { background: var(--bid); border-color: var(--bid); color: #fff; }
+  .btn.sell { background: var(--ask); border-color: var(--ask); color: #fff; }
+  main { padding: 16px; max-width: 1200px; margin: 0 auto; }
+  .grid { display: grid; gap: 14px; grid-template-columns: 1.1fr 1fr 1fr; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; min-width: 0; }
+  .panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin: 0 0 10px; font-weight: 650; }
+  .ladder .row { position: relative; display: grid; grid-template-columns: 1fr 1fr 40px; padding: 3px 8px; border-radius: 4px; cursor: default; }
+  .ladder .row .bar { position: absolute; top: 0; bottom: 0; right: 0; border-radius: 4px; z-index: 0; }
+  .ladder .row span { position: relative; z-index: 1; }
+  .ladder .row span:nth-child(2), .ladder .row span:nth-child(3) { text-align: right; }
+  .ladder .ask .bar { background: var(--ask-bg); } .ladder .ask .px { color: var(--ask); }
+  .ladder .bid .bar { background: var(--bid-bg); } .ladder .bid .px { color: var(--bid); }
+  .ladder .head { color: var(--muted); font-size: 11.5px; }
+  .spread { text-align: center; padding: 6px 0; margin: 4px 0; border-block: 1px dashed var(--line); color: var(--muted); font-size: 12.5px; }
+  .form { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .form label { display: grid; gap: 3px; font-size: 11.5px; color: var(--muted); }
+  .form input, .form select { border: 1px solid var(--line); background: var(--bg); border-radius: 8px; padding: 6px 8px; width: 100%; }
+  .form .wide { grid-column: 1 / -1; }
+  .btns { display: flex; gap: 8px; grid-column: 1 / -1; }
+  .btns .btn { flex: 1; padding: 8px; font-weight: 600; }
+  .tape { max-height: 260px; overflow: auto; }
+  .tape div { display: flex; justify-content: space-between; padding: 2px 0; border-bottom: 1px solid var(--line); }
+  .buy-t { color: var(--bid); } .sell-t { color: var(--ask); }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .kpi { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+  .kpi b { display: block; font-size: 20px; font-weight: 650; }
+  .kpi span { color: var(--muted); font-size: 11.5px; }
+  .log { max-height: 190px; overflow: auto; color: var(--muted); font-size: 12px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .myorders .o { display: flex; justify-content: space-between; align-items: center; padding: 3px 0; border-bottom: 1px solid var(--line); }
+  .myorders .x { border: 0; background: none; color: var(--ask); cursor: pointer; }
+  .note { color: var(--muted); font-size: 12.5px; margin: 8px 0 0; }
+  .warn { color: var(--warn); }
+  /* charts */
+  .chart-row { display: grid; grid-template-columns: 110px 1fr 70px; gap: 8px; align-items: center; margin: 5px 0; }
+  .chart-row .track { background: var(--bg); border-radius: 6px; height: 18px; overflow: hidden; }
+  .chart-row .fill { height: 100%; border-radius: 6px; background: var(--accent); }
+  .chart-row .fill.win { background: var(--bid); } .chart-row .fill.lose { background: var(--ask); }
+  .chart-row .fill.neutral { background: var(--muted); opacity: .6; }
+  .chart-row .val { text-align: right; }
+  .two { display: grid; gap: 14px; grid-template-columns: 1fr 1fr; }
+  @media (max-width: 900px) { .two { grid-template-columns: 1fr; } }
+  table { border-collapse: collapse; width: 100%; } td, th { text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; } th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>exchange-sim <span class="sub">Explorer</span></h1>
+  <span class="sub">A price-time priority matching engine you can poke. The engine on this page is a JavaScript port of the C++ rules.</span>
+  <nav role="tablist">
+    <button class="tab" role="tab" aria-selected="true" data-tab="book">Live order book</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="results">Benchmark results</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="how">How it works</button>
+    <button class="btn" id="theme" title="Toggle theme">Theme</button>
+  </nav>
+</header>
+
+<main>
+<!-- ============ LIVE BOOK ============ -->
+<section id="tab-book">
+  <div class="kpis">
+    <div class="kpi"><b class="mono" id="k-mid">n/a</b><span>mid price</span></div>
+    <div class="kpi"><b class="mono" id="k-spread">n/a</b><span>spread (ticks)</span></div>
+    <div class="kpi"><b class="mono" id="k-trades">0</b><span>trades</span></div>
+    <div class="kpi"><b class="mono" id="k-vol">0</b><span>volume (lots)</span></div>
+    <div class="kpi"><b class="mono" id="k-orders">0</b><span>resting orders</span></div>
+  </div>
+  <div class="grid">
+    <div class="panel ladder">
+      <h2>Order book</h2>
+      <div class="row head mono"><span>Price</span><span>Size</span><span>#</span></div>
+      <div id="asks"></div>
+      <div class="spread mono" id="spread-row">empty book</div>
+      <div id="bids"></div>
+      <p class="note">Hover a price level to see its queue: first in line trades first.</p>
+    </div>
+
+    <div class="panel">
+      <h2>Send an order</h2>
+      <div class="form">
+        <label>Type
+          <select id="f-type"><option value="limit">Limit</option><option value="market">Market</option></select></label>
+        <label>Time in force
+          <select id="f-tif"><option value="day">Day (rests)</option><option value="ioc">IOC (fill or cancel rest)</option><option value="fok">FOK (all or nothing)</option></select></label>
+        <label>Price (ticks)<input id="f-price" class="mono" type="number" value="1000"></label>
+        <label>Quantity<input id="f-qty" class="mono" type="number" value="100" min="1"></label>
+        <label class="wide" style="display:flex;gap:8px;align-items:center;flex-direction:row">
+          <input id="f-post" type="checkbox" style="width:auto"> Post-only (reject if it would trade)</label>
+        <div class="btns">
+          <button class="btn buy" id="b-buy">Buy</button>
+          <button class="btn sell" id="b-sell">Sell</button>
+        </div>
+      </div>
+      <p class="note" id="msg" aria-live="polite"></p>
+      <h2 style="margin-top:14px">Your resting orders</h2>
+      <div class="myorders" id="mine"><span class="note">none yet</span></div>
+      <h2 style="margin-top:14px">Market simulator</h2>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn primary" id="b-flow">Start random flow</button>
+        <button class="btn" id="b-reset">Reset</button>
+        <span class="chip"><input type="range" id="f-speed" min="1" max="40" value="8" style="width:100px"> speed</span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Trade tape</h2>
+      <div class="tape mono" id="tape"><span class="note">no trades yet</span></div>
+      <h2 style="margin-top:14px">Event log</h2>
+      <div class="log mono" id="log"></div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:14px">
+    <h2>Speed check: this page's engine, in your browser</h2>
+    <button class="btn" id="b-bench">Run 300,000 random orders</button>
+    <span class="mono" id="bench-out" style="margin-left:10px"></span>
+    <p class="note">This times the JavaScript port on your browser, with objects and garbage collection, so it is
+      <b>not</b> the C++ number. The C++ engine does ~26 million messages/second on one core with zero allocations
+      (see the Benchmark results tab). The gap is what "cache-conscious, allocation-free" buys.</p>
+  </div>
+</section>
+
+<!-- ============ RESULTS ============ -->
+<section id="tab-results" class="hidden">
+  <div class="panel" style="margin-bottom:14px">
+    <h2>What was measured, and where</h2>
+    <p class="note" style="margin:0">Core i7-1355U laptop under WSL2, GCC 16, one pinned core, 5M-message deterministic workload,
+      best of 15 interleaved runs. The hypervisor takes ~12% of a pinned core, so throughput moves up to 2x between runs and tails
+      above p99 measure the machine. Cache counts are cachegrind <i>simulations</i>, not hardware counters. Details: BENCHMARKS.md.</p>
+  </div>
+  <div class="two">
+    <div class="panel"><h2>Throughput, million messages / second (higher is better)</h2><div id="ch-thr"></div>
+      <p class="note">Design point 1 (dense arrays) barely helped. Design point 2, only a change to the id-lookup hash, was worth 2.3x.</p></div>
+    <div class="panel"><h2>Median latency per message, ns (lower is better)</h2><div id="ch-lat"></div>
+      <p class="note">Timer overhead of ~17 ns is included, not subtracted.</p></div>
+    <div class="panel"><h2>L1 data-cache misses, millions (simulated)</h2><div id="ch-d1"></div>
+      <p class="note">Pure structure-of-arrays doubles L1 misses: the "obvious" optimization was wrong for this workload.</p></div>
+    <div class="panel"><h2>Last-level cache misses, millions (simulated)</h2><div id="ch-ll"></div>
+      <p class="note">Halving the index entries (16 to 8 bytes) cut LL misses another 11%.</p></div>
+  </div>
+  <div class="panel" style="margin-top:14px">
+    <h2>Three-thread pipeline, paced (latency includes the cross-core queue hop)</h2>
+    <table class="mono">
+      <tr><th>offered load</th><th>ingress→match p50</th><th>p90</th><th>p99</th><th>ingress→market data p50</th></tr>
+      <tr><td>0.5 M msg/s</td><td>220 ns</td><td>8.8 µs</td><td>1.08 ms</td><td>453 ns</td></tr>
+      <tr><td>1.0 M msg/s</td><td>208 ns</td><td>15.3 µs</td><td>1.05 ms</td><td>429 ns</td></tr>
+      <tr><td>2.0 M msg/s</td><td>214 ns</td><td>65.9 µs</td><td>3.62 ms</td><td>429 ns</td></tr>
+    </table>
+    <p class="note warn">Saturated throughput was 4.7 to 5.1 M msg/s. The millisecond-scale p99 is the hypervisor (jitter probe: ~1,450 stalls/s, up to 10.8 ms), not the engine.</p>
+  </div>
+</section>
+
+<!-- ============ HOW ============ -->
+<section id="tab-how" class="hidden">
+  <div class="two">
+    <div class="panel"><h2>The rules (all implemented here and in C++)</h2>
+      <p><b>Price-time priority.</b> A buy matches the lowest-priced sell first; ties go to whoever arrived first.
+      Trades happen at the <i>resting</i> order's price.</p>
+      <p><b>Limit</b> orders rest if they can't fully trade. <b>Market</b> orders sweep the book and never rest.
+      <b>IOC</b> trades what it can and cancels the rest. <b>FOK</b> trades everything or nothing.
+      <b>Post-only</b> is rejected if it would take liquidity.</p>
+      <p><b>Cancel</b> removes an order. <b>Modify</b> keeps your place in line only if you shrink size at the same price.</p>
+    </div>
+    <div class="panel"><h2>Why the C++ version is fast</h2>
+      <p>Prices are array indices, not tree nodes. A bitmap finds the next best price in a couple of instructions.
+      Orders live in preallocated slabs, so nothing allocates while matching. Threads talk through a lock-free ring, and each
+      is pinned to its own core.</p>
+      <p>Every version of the engine is checked against a deliberately simple reference on millions of random events: outputs must match byte for byte.</p>
+    </div>
+  </div>
+</section>
+</main>
+
+<script>
+"use strict";
+/* ---------------- Engine: price-time priority book (JS port of the C++ semantics) ---------------- */
+class Book {
+  constructor() { this.reset(); }
+  reset() {
+    this.bids = new Map(); this.asks = new Map();   // price -> array of orders (FIFO)
+    this.byId = new Map(); this.nextId = 1; this.events = [];
+    this.trades = 0; this.volume = 0; this.msgs = 0; this.record = true;
+  }
+  emit(e) { if (this.record) this.events.push(e); }
+  bestBid() { let b = -Infinity; for (const p of this.bids.keys()) if (p > b) b = p; return b === -Infinity ? null : b; }
+  bestAsk() { let a = Infinity; for (const p of this.asks.keys()) if (p < a) a = p; return a === Infinity ? null : a; }
+  crosses(side, limit) {
+    if (side === "buy") { const a = this.bestAsk(); return a !== null && a <= limit; }
+    const b = this.bestBid(); return b !== null && b >= limit;
+  }
+  fillable(side, limit, qty) {
+    let avail = 0;
+    const book = side === "buy" ? this.asks : this.bids;
+    for (const [p, q] of book) {
+      if (side === "buy" ? p <= limit : p >= limit) for (const o of q) avail += o.qty;
+    }
+    return avail >= qty;
+  }
+  add({ side, type, price, qty, tif = "day", post = false, owner = "you" }) {
+    this.msgs++;
+    if (!(qty > 0)) return this.reject("quantity must be positive");
+    const market = type === "market";
+    const limit = market ? (side === "buy" ? Infinity : -Infinity) : price;
+    if (!market && !Number.isFinite(price)) return this.reject("price required for limit orders");
+    if (post && this.crosses(side, limit)) return this.reject("post-only order would have traded");
+    const id = this.nextId++;
+    this.emit({ t: "accepted", id, side, price: market ? null : price, qty });
+    if (tif === "fok" && !this.fillable(side, limit, qty)) {
+      this.emit({ t: "canceled", id, qty, why: "FOK: not fully fillable" });
+      return { id, filled: 0 };
+    }
+    let left = qty;
+    const opp = side === "buy" ? this.asks : this.bids;
+    while (left > 0 && this.crosses(side, limit)) {
+      const px = side === "buy" ? this.bestAsk() : this.bestBid();
+      const q = opp.get(px);
+      while (left > 0 && q.length) {
+        const m = q[0], fill = Math.min(left, m.qty);
+        m.qty -= fill; left -= fill; this.trades++; this.volume += fill;
+        this.emit({ t: "trade", price: px, qty: fill, taker: id, maker: m.id, side });
+        if (m.qty === 0) { q.shift(); this.byId.delete(m.id); }
+      }
+      if (!q.length) opp.delete(px);
+    }
+    if (left > 0) {
+      if (market || tif !== "day") this.emit({ t: "canceled", id, qty: left, why: market ? "market order: book exhausted" : "IOC remainder" });
+      else this.rest({ id, side, price, qty: left, owner });
+    }
+    return { id, filled: qty - left };
+  }
+  rest(o) {
+    const book = o.side === "buy" ? this.bids : this.asks;
+    if (!book.has(o.price)) book.set(o.price, []);
+    book.get(o.price).push(o); this.byId.set(o.id, o);
+  }
+  cancel(id) {
+    this.msgs++;
+    const o = this.byId.get(id); if (!o) return false;
+    const book = o.side === "buy" ? this.bids : this.asks, q = book.get(o.price);
+    q.splice(q.indexOf(o), 1); if (!q.length) book.delete(o.price);
+    this.byId.delete(id);
+    this.emit({ t: "canceled", id, qty: o.qty, why: "user cancel" });
+    return true;
+  }
+  reject(why) { this.emit({ t: "rejected", why }); return { id: null, why }; }
+  levels(side, n) {
+    const book = side === "buy" ? this.bids : this.asks;
+    const prices = [...book.keys()].sort((a, b) => side === "buy" ? b - a : a - b).slice(0, n);
+    return prices.map(p => ({ price: p, qty: book.get(p).reduce((s, o) => s + o.qty, 0), orders: book.get(p) }));
+  }
+}
+
+/* ---------------- UI ---------------- */
+const $ = id => document.getElementById(id);
+const book = new Book();
+let mid = 1000, flowTimer = null;
+
+function fmt(n) { return n.toLocaleString(); }
+function render() {
+  const asks = book.levels("sell", 10), bids = book.levels("buy", 10);
+  const maxQ = Math.max(1, ...asks.map(l => l.qty), ...bids.map(l => l.qty));
+  const row = (l, cls) => {
+    const tip = l.orders.map((o, i) => `${i + 1}. #${o.id} ${o.owner} ${o.qty}`).join("\n");
+    return `<div class="row mono ${cls}" title="${tip}"><div class="bar" style="width:${(100 * l.qty / maxQ).toFixed(1)}%"></div>` +
+           `<span class="px">${l.price}</span><span>${fmt(l.qty)}</span><span>${l.orders.length}</span></div>`;
+  };
+  $("asks").innerHTML = asks.slice().reverse().map(l => row(l, "ask")).join("") || '<div class="note">no asks</div>';
+  $("bids").innerHTML = bids.map(l => row(l, "bid")).join("") || '<div class="note">no bids</div>';
+  const bb = book.bestBid(), ba = book.bestAsk();
+  $("spread-row").textContent = bb !== null && ba !== null ? `spread ${ba - bb}  ·  mid ${((bb + ba) / 2).toFixed(1)}` : "one-sided or empty book";
+  $("k-mid").textContent = bb !== null && ba !== null ? ((bb + ba) / 2).toFixed(1) : "n/a";
+  $("k-spread").textContent = bb !== null && ba !== null ? ba - bb : "n/a";
+  $("k-trades").textContent = fmt(book.trades); $("k-vol").textContent = fmt(book.volume);
+  $("k-orders").textContent = fmt(book.byId.size);
+
+  const mine = [...book.byId.values()].filter(o => o.owner === "you");
+  $("mine").innerHTML = mine.length ? mine.map(o =>
+    `<div class="o mono"><span class="${o.side === "buy" ? "buy-t" : "sell-t"}">${o.side} ${o.qty} @ ${o.price}</span>` +
+    `<button class="x" data-id="${o.id}" aria-label="cancel order ${o.id}">cancel</button></div>`).join("") : '<span class="note">none yet</span>';
+
+  const evs = book.events.splice(0);
+  for (const e of evs) {
+    if (e.t === "trade") {
+      const d = document.createElement("div");
+      d.innerHTML = `<span class="${e.side === "buy" ? "buy-t" : "sell-t"}">${e.side === "buy" ? "▲" : "▼"} ${e.price}</span><span>${fmt(e.qty)}</span>`;
+      const tape = $("tape"); if (tape.querySelector(".note")) tape.innerHTML = ""; tape.prepend(d);
+      while (tape.children.length > 60) tape.lastChild.remove();
+      mid = e.price;
+    }
+    if (e.t !== "trade" || e.taker) {
+      const d = document.createElement("div");
+      d.textContent = e.t === "trade" ? `trade ${e.qty} @ ${e.price} (#${e.taker} took #${e.maker})`
+        : e.t === "accepted" ? `accepted #${e.id} ${e.side} ${e.qty}${e.price !== null ? " @ " + e.price : " market"}`
+        : e.t === "canceled" ? `canceled #${e.id} (${e.qty}): ${e.why}` : `REJECTED: ${e.why}`;
+      $("log").prepend(d); while ($("log").children.length > 80) $("log").lastChild.remove();
+    }
+  }
+}
+function submit(side) {
+  const type = $("f-type").value;
+  const r = book.add({ side, type, price: +$("f-price").value, qty: +$("f-qty").value, tif: $("f-tif").value, post: $("f-post").checked });
+  $("msg").textContent = r.id === null ? "Rejected: " + r.why : `Order #${r.id} sent; ${r.filled} lots filled immediately.`;
+  render();
+}
+$("b-buy").onclick = () => submit("buy"); $("b-sell").onclick = () => submit("sell");
+$("mine").onclick = e => { const id = e.target.dataset.id; if (id) { book.cancel(+id); render(); } };
+$("f-type").onchange = () => { $("f-price").disabled = $("f-type").value === "market"; };
+
+/* random flow: passive quotes around a wandering mid, plus occasional marketable orders */
+function rnd(n) { return Math.floor(Math.random() * n); }
+function randomOrder() {
+  const side = Math.random() < .5 ? "buy" : "sell";
+  mid += Math.random() < .1 ? (Math.random() < .5 ? 1 : -1) : 0;
+  const cross = Math.random() < .18, d = 1 + rnd(8);
+  const price = side === "buy" ? mid + (cross ? d : -d) : mid - (cross ? d : -d);
+  return { side, type: "limit", price, qty: 50 * (1 + rnd(6)), owner: "sim" };
+}
+function flowTick() {
+  const n = +$("f-speed").value;
+  for (let i = 0; i < n; i++) {
+    if (Math.random() < .3 && book.byId.size > 30) {
+      const ids = [...book.byId.values()].filter(o => o.owner === "sim");
+      if (ids.length) book.cancel(ids[rnd(ids.length)].id);
+    } else book.add(randomOrder());
+  }
+  render();
+}
+$("b-flow").onclick = () => {
+  if (flowTimer) { clearInterval(flowTimer); flowTimer = null; $("b-flow").textContent = "Start random flow"; }
+  else { flowTimer = setInterval(flowTick, 200); $("b-flow").textContent = "Stop random flow"; }
+};
+$("b-reset").onclick = () => { book.reset(); mid = 1000; $("tape").innerHTML = '<span class="note">no trades yet</span>'; $("log").innerHTML = ""; render(); };
+$("b-bench").onclick = () => {
+  const b = new Book(); b.record = false; let m = 1000, n = 300000;
+  const t0 = performance.now();
+  for (let i = 0; i < n; i++) {
+    m += Math.random() < .1 ? (Math.random() < .5 ? 1 : -1) : 0;
+    const side = Math.random() < .5 ? "buy" : "sell", cross = Math.random() < .1, d = 1 + rnd(8);
+    b.add({ side, type: "limit", price: side === "buy" ? m + (cross ? d : -d) : m - (cross ? d : -d), qty: 50 * (1 + rnd(6)) });
+    if (b.byId.size > 4000 && Math.random() < .5) { const k = b.byId.keys().next().value; b.cancel(k); }
+  }
+  const s = (performance.now() - t0) / 1000;
+  $("bench-out").textContent = `${(n / s / 1e6).toFixed(2)} M orders/s in this browser (${b.trades.toLocaleString()} trades)`;
+};
+
+/* ---------------- Results charts (numbers copied from BENCHMARKS.md) ---------------- */
+const impls = ["ref (std::map)", "aos-scatter", "aos (shipped)", "soa", "hybrid"];
+function bars(id, vals, unit, higherBetter, digits = 1) {
+  const max = Math.max(...vals);
+  $(id).innerHTML = vals.map((v, i) => {
+    const cls = i === 0 ? "neutral" : (i === 2 ? "win" : "");
+    return `<div class="chart-row"><span>${impls[i]}</span><div class="track"><div class="fill ${cls}" style="width:${(100 * v / max).toFixed(1)}%"></div></div>` +
+           `<span class="val mono">${v.toFixed(digits)}${unit}</span></div>`;
+  }).join("");
+}
+bars("ch-thr", [9.68, 11.41, 26.31, 24.11, 25.17], "", true, 2);
+bars("ch-lat", [119, 177, 52, 53, 50], " ns", false, 0);
+bars("ch-d1", [9.19, 4.23, 3.99, 8.35, 4.17], " M", false, 2);
+bars("ch-ll", [0.93, 1.65, 1.48, 5.22, 1.76], " M", false, 2);
+
+/* ---------------- tabs & theme ---------------- */
+document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
+  document.querySelectorAll(".tab").forEach(x => x.setAttribute("aria-selected", x === t));
+  for (const n of ["book", "results", "how"]) $("tab-" + n).classList.toggle("hidden", n !== t.dataset.tab);
+});
+$("theme").onclick = () => {
+  const cur = document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  document.documentElement.dataset.theme = cur === "dark" ? "light" : "dark";
+};
+
+/* seed a small book so the page isn't empty */
+for (let i = 1; i <= 6; i++) {
+  book.add({ side: "buy", type: "limit", price: 1000 - i, qty: 100 * i, owner: "sim" });
+  book.add({ side: "sell", type: "limit", price: 1000 + i, qty: 100 * i, owner: "sim" });
+}
+$("f-price").value = 1001;
+render();
+</script>
+</body>
+</html>
