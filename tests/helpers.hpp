@@ -78,38 +78,12 @@ inline bool same_bytes(const Event& a, const Event& b) { return std::memcmp(&a, 
   template <class Book>                                         \
   static void name()
 
-// Field-by-field event assertions with readable failure messages.
-#define CHECK_ACCEPTED(e, id_, side_, px_, qty_)       \
-  do {                                                 \
-    CHECK_EQ((e).type, ::exsim::EventType::Accepted);  \
-    CHECK_EQ((e).order_id, OrderId{id_});              \
-    CHECK((e).side == (side_));                        \
-    CHECK_EQ((e).price, Price{px_});                   \
-    CHECK_EQ((e).qty, Qty{qty_});                      \
-  } while (0)
+// Field-by-field event assertions. The event expression is evaluated exactly once (it usually sends a
+// command), then compared field by field.
+#define CHECK_ACCEPTED(e, id_, side_, px_, qty_)           do {                                                       const ::exsim::Event ev_ = (e);                          CHECK_EQ(ev_.type, ::exsim::EventType::Accepted);        CHECK_EQ(ev_.order_id, OrderId{id_});                    CHECK(ev_.side == (side_));                              CHECK_EQ(ev_.price, Price{px_});                         CHECK_EQ(ev_.qty, Qty{qty_});                          } while (0)
 
-#define CHECK_TRADE(e, taker_, maker_, px_, qty_, leaves_) \
-  do {                                                     \
-    CHECK_EQ((e).type, ::exsim::EventType::Trade);         \
-    CHECK_EQ((e).order_id, OrderId{taker_});               \
-    CHECK_EQ((e).maker_id, OrderId{maker_});               \
-    CHECK_EQ((e).price, Price{px_});                       \
-    CHECK_EQ((e).qty, Qty{qty_});                          \
-    CHECK_EQ((e).leaves, Qty{leaves_});                    \
-  } while (0)
+#define CHECK_TRADE(e, taker_, maker_, px_, qty_, leaves_)   do {                                                         const ::exsim::Event ev_ = (e);                            CHECK_EQ(ev_.type, ::exsim::EventType::Trade);             CHECK_EQ(ev_.order_id, OrderId{taker_});                   CHECK_EQ(ev_.maker_id, OrderId{maker_});                   CHECK_EQ(ev_.price, Price{px_});                           CHECK_EQ(ev_.qty, Qty{qty_});                              CHECK_EQ(ev_.leaves, Qty{leaves_});                      } while (0)
 
-#define CHECK_CANCELED(e, id_, px_, qty_, reason_)     \
-  do {                                                 \
-    CHECK_EQ((e).type, ::exsim::EventType::Canceled);  \
-    CHECK_EQ((e).order_id, OrderId{id_});              \
-    CHECK_EQ((e).price, Price{px_});                   \
-    CHECK_EQ((e).qty, Qty{qty_});                      \
-    CHECK((e).reason == (reason_));                    \
-  } while (0)
+#define CHECK_CANCELED(e, id_, px_, qty_, reason_)         do {                                                       const ::exsim::Event ev_ = (e);                          CHECK_EQ(ev_.type, ::exsim::EventType::Canceled);        CHECK_EQ(ev_.order_id, OrderId{id_});                    CHECK_EQ(ev_.price, Price{px_});                         CHECK_EQ(ev_.qty, Qty{qty_});                            CHECK(ev_.reason == (reason_));                        } while (0)
 
-#define CHECK_REJECTED(e, id_, reason_)                \
-  do {                                                 \
-    CHECK_EQ((e).type, ::exsim::EventType::Rejected);  \
-    CHECK_EQ((e).order_id, OrderId{id_});              \
-    CHECK((e).reason == (reason_));                    \
-  } while (0)
+#define CHECK_REJECTED(e, id_, reason_)                    do {                                                       const ::exsim::Event ev_ = (e);                          CHECK_EQ(ev_.type, ::exsim::EventType::Rejected);        CHECK_EQ(ev_.order_id, OrderId{id_});                    CHECK(ev_.reason == (reason_));                        } while (0)
