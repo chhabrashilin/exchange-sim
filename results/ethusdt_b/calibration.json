@@ -1,0 +1,16 @@
+{
+  "trades": 12622,
+  "seconds": 604.8,
+  "median_spread_ticks": 1.0,
+  "median_trade_depth_ticks": 1.5,
+  "p90_trade_depth_ticks": 25.5,
+  "k_per_tick": 0.05837243528979867,
+  "A_per_sec": 10.178326935020483,
+  "r2_exponential": 0.9962824909685702,
+  "power_law_exponent": 1.077987586042501,
+  "r2_power_law": 0.8159016417621454,
+  "fit_range_ticks": [
+    1.0,
+    78.0
+  ]
+}

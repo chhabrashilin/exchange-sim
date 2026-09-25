@@ -1,0 +1,10 @@
+capture: 18852 records (6028 diffs, 12655 trades, 169 snapshots), price x1e-2, qty x1e-5
+seeded from snapshot id 81449360606 (1000 bids, 1000 asks)
+
+replay: 6021 diffs applied (7 before the seed skipped), 0 sequence gaps, 0 resyncs, 0 depth reseeds
+mirror: 151668 level updates into the engine, 0 out of band, 0 book-full, 0 rejects
+phantom trades (must be 0): 0
+diff apply latency: p50 373 ns, p99 7255 ns, p99.9 28235 ns, max 165361 ns
+snapshots in the replayed id range: 168; exactly aligned to a diff boundary: 168; mid-diff (not exactly checkable): 0
+exact validation (up to top 400 levels/side inside the complete region, price and qty): 168/168 snapshots exact, 134400 levels compared, 0 mismatched
+BOOK RECONSTRUCTION VALIDATED
